@@ -1,0 +1,57 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bookstore - Browse Books</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .search-bar { margin-bottom: 20px; }
+        .book-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; }
+        .book { border: 1px solid #ccc; padding: 10px; border-radius: 5px; }
+        .flash { padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>Bookstore</h1>
+    <div>
+        {% if session.username %}
+            <p>Welcome, {{ session.username }}! <a href="{{ url_for('logout') }}">Logout</a></p>
+            <p><a href="{{ url_for('cart') }}">View Cart</a></p>
+            {% if session.is_admin %}
+                <p><a href="{{ url_for('add_book') }}">Add New Book (Admin)</a></p>
+            {% endif %}
+        {% else %}
+            <p><a href="{{ url_for('login') }}">Login</a> | <a href="{{ url_for('register') }}">Register</a></p>
+        {% endif %}
+    </div>
+    <div class="search-bar">
+        <form action="{{ url_for('search') }}" method="GET">
+            <input type="text" name="query" placeholder="Search by title, author, or genre" value="{{ query if query else '' }}">
+            <button type="submit">Search</button>
+        </form>
+    </div>
+    {% for message in get_flashed_messages(with_categories=true) %}
+        <div class="flash {{ message[0] }}">{{ message[1] }}</div>
+    {% endfor %}
+    <div class="book-list">
+        {% for book in books %}
+            <div class="book">
+                <h3>{{ book.title }}</h3>
+                <p>Author: {{ book.author }}</p>
+                <p>Genre: {{ book.genre }}</p>
+                <p>Price: ${{ book.price }}</p>
+                <a href="{{ url_for('add_to_cart', book_id=book.id) }}">Add to Cart</a>
+            </div>
+        {% else %}
+            <p>No books found.</p>
+        {% endfor %}
+    </div>
+</body>
+</html>
+</template>
