@@ -1,21 +1,10 @@
 # Flask Bookstore App
 A simple Flask web application for a bookstore with user registration, login, book browsing, search, cart, and admin features to add books and manage admin accounts.
-Table of Contents
 
-Description
-Installation
-Running the App
-Project Structure
-Dependencies
-Features
-Creating Admin Accounts
-License
-Contact
-
-Description
+# Description
 This project is a Flask-based web application designed to simulate an online bookstore. It allows users to browse and search for books, add them to a cart, and manage their accounts. Admins have additional privileges to add new books and create new admin accounts. The application uses SQLite for data storage and implements secure password hashing for user authentication.
 The app is structured to be user-friendly, with a login-first approach to ensure secure access to features. It includes debugging logs to help developers troubleshoot issues and is suitable for learning Flask, SQLite, and web development concepts.
-Installation
+# Installation
 To set up the Flask Bookstore App on your local machine, follow these steps:
 
 Clone the Repository:Clone the repository from GitHub:
@@ -34,7 +23,7 @@ Flask
 
 
 
-Running the App
+# Running the App
 
 Start the Application:Run the main Python script to start the Flask server:
 python app.py
@@ -49,7 +38,7 @@ Username: admin
 Password: admin123Alternatively, you can register a new user account via the /register route.
 
 
-Explore the App:
+# Explore the App:
 
 Browse and search for books.
 Add books to your cart.
@@ -57,7 +46,7 @@ If logged in as an admin, add new books or create new admin accounts.
 
 
 
-Project Structure
+# Project Structure
 The project is organized as follows:
 
 
