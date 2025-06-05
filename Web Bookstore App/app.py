@@ -1,360 +1,403 @@
-import sqlite3
+import logging
+from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
-import logging
+from flask_mysqldb import MySQL
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, template_folder='templates')  # Explicitly set template folder
-app.secret_key = secrets.token_hex(16)  # Generate a random secret key for the app
+app = Flask(__name__, template_folder='templates', static_folder='static')
+app.secret_key = secrets.token_hex(16)
 logger.debug("Flask app initialized")
 
-# Database setup
+# MySQL configurations for XAMPP
+app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_USER'] = 'root'
+app.config['MYSQL_PASSWORD'] = ''  # Default XAMPP MySQL password is empty
+app.config['MYSQL_DB'] = 'bookstore'
+mysql = MySQL(app)
+
+# Initialize the database and create default admin
 def init_db():
     try:
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bookstore.db')
-        logger.debug(f"Attempting to create database at {db_path}")
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        logger.debug("Database connected successfully")
-        c.execute('''CREATE TABLE IF NOT EXISTS books
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      title TEXT NOT NULL,
-                      author TEXT NOT NULL,
-                      genre TEXT,
-                      price REAL NOT NULL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      username TEXT NOT NULL UNIQUE,
-                      password TEXT NOT NULL,
-                      user_key TEXT NOT NULL UNIQUE)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS admins
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      username TEXT NOT NULL UNIQUE,
-                      password TEXT NOT NULL,
-                      admin_key TEXT NOT NULL UNIQUE)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS cart
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id INTEGER,
-                      book_id INTEGER,
-                      quantity INTEGER,
-                      FOREIGN KEY(user_id) REFERENCES users(id),
-                      FOREIGN KEY(book_id) REFERENCES books(id))''')
-        # Sample data for books
-        sample_books = [
-            ('The Great Gatsby', 'F. Scott Fitzgerald', 'Fiction', 10.99),
-            ('Python Crash Course', 'Eric Matthes', 'Education', 29.99),
-            ('Dune', 'Frank Herbert', 'Sci-Fi', 15.99)
-        ]
-        c.executemany('INSERT OR IGNORE INTO books (title, author, genre, price) VALUES (?, ?, ?, ?)', sample_books)
-        # Sample admin with unique key
-        admin_key = secrets.token_hex(16)
-        c.execute('INSERT OR IGNORE INTO admins (username, password, admin_key) VALUES (?, ?, ?)',
-                  ('admin', generate_password_hash('admin123'), admin_key))
-        # Your personal admin account
-        your_admin_key = secrets.token_hex(16)
-        c.execute('INSERT OR IGNORE INTO admins (username, password, admin_key) VALUES (?, ?, ?)',
-                  ('your_username', generate_password_hash('your_secure_password'), your_admin_key))
-        conn.commit()
-        conn.close()
-        logger.debug(f"Database created and populated at {db_path}")
-        return db_path
+        logger.debug("Attempting to initialize database")
+        cursor = mysql.connection.cursor()
+
+        # Drop existing tables to ensure a clean database
+        cursor.execute('DROP TABLE IF EXISTS wishlist')
+        cursor.execute('DROP TABLE IF EXISTS cart')
+        cursor.execute('DROP TABLE IF EXISTS books')
+        cursor.execute('DROP TABLE IF EXISTS admins')
+        cursor.execute('DROP TABLE IF EXISTS users')
+
+        # Create tables
+        cursor.execute('''CREATE TABLE users
+                          (id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                           username VARCHAR(50) NOT NULL UNIQUE,
+                           password VARCHAR(255) NOT NULL,
+                           user_key VARCHAR(50) NOT NULL UNIQUE)''')
+        cursor.execute('''CREATE TABLE admins
+                          (id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                           username VARCHAR(50) NOT NULL UNIQUE,
+                           password VARCHAR(255) NOT NULL,
+                           admin_key VARCHAR(50) NOT NULL UNIQUE)''')
+        cursor.execute('''CREATE TABLE books
+                          (id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                           title VARCHAR(100) NOT NULL,
+                           author VARCHAR(100) NOT NULL,
+                           genre VARCHAR(50),
+                           price DECIMAL(10, 2) NOT NULL)''')
+        cursor.execute('''CREATE TABLE cart
+                          (id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                           user_id INTEGER,
+                           book_id INTEGER,
+                           quantity INTEGER,
+                           FOREIGN KEY(user_id) REFERENCES users(id),
+                           FOREIGN KEY(book_id) REFERENCES books(id))''')
+        cursor.execute('''CREATE TABLE wishlist
+                          (id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                           user_id INTEGER,
+                           book_id INTEGER,
+                           FOREIGN KEY(user_id) REFERENCES users(id),
+                           FOREIGN KEY(book_id) REFERENCES books(id))''')
+
+        # Create default admin account
+        admin_username = 'admin'
+        admin_password = 'admin123password'
+        admin_key = secrets.token_hex(8)
+        hashed_password = generate_password_hash(admin_password)
+        cursor.execute('INSERT INTO admins (username, password, admin_key) VALUES (%s, %s, %s)',
+                       (admin_username, hashed_password, admin_key))
+
+        mysql.connection.commit()
+        logger.debug("Database tables created and default admin account added successfully")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
-        raise
+    finally:
+        cursor.close()
 
-# Connect to database
-def get_db():
-    try:
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bookstore.db')
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        logger.debug("Database connection opened")
-        return conn
-    except Exception as e:
-        logger.error(f"Error connecting to database: {e}")
-        raise
+# Call init_db to set up the database
+with app.app_context():
+    init_db()
 
-# Check login status for protected routes
-def login_required(route_function):
-    def wrapper(*args, **kwargs):
-        if 'user_id' not in session:
-            logger.debug("User not logged in, redirecting to login")
-            flash('Please log in to access this page!', 'error')
+# Decorator to require login
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in session:
+            flash('Please login to access this page.', 'error')
             return redirect(url_for('login'))
-        return route_function(*args, **kwargs)
-    wrapper.__name__ = route_function.__name__
-    return wrapper
+        return f(*args, **kwargs)
+    return decorated_function
 
-# Home page - Browse books
+# Routes
 @app.route('/')
-@login_required
 def index():
     try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute('SELECT * FROM books')
-        books = c.fetchall()
-        conn.close()
-        logger.debug("Rendering index.html with books")
-        return render_template('index.html', books=books)
+        cursor = mysql.connection.cursor()
+        # Default query to get all books
+        query = 'SELECT * FROM books'
+        params = []
+
+        # Handle filters from the form
+        genre = request.args.get('genre')
+        price_range = request.args.get('price_range')
+
+        if genre and genre != 'all':
+            query += ' WHERE genre = %s'
+            params.append(genre)
+        if price_range:
+            if price_range == '0-10':
+                query += ' WHERE price BETWEEN %s AND %s' if not genre else ' AND price BETWEEN %s AND %s'
+                params.extend([0, 10])
+            elif price_range == '10-20':
+                query += ' WHERE price BETWEEN %s AND %s' if not genre else ' AND price BETWEEN %s AND %s'
+                params.extend([10, 20])
+            elif price_range == '20+':
+                query += ' WHERE price >= %s' if not genre else ' AND price >= %s'
+                params.append(20)
+
+        cursor.execute(query, params)
+        books = cursor.fetchall()
+        cursor.close()
+        return render_template('index.html', books=books, genre=genre, price_range=price_range)
     except Exception as e:
         logger.error(f"Error in index route: {e}")
-        flash('An error occurred while loading books!', 'error')
-        return redirect(url_for('login'))
+        flash('An error occurred while fetching books!', 'error')
+        return render_template('index.html', books=[])
 
-# Search books
 @app.route('/search')
-@login_required
 def search():
+    query = request.args.get('query', '')
     try:
-        query = request.args.get('query', '')
-        conn = get_db()
-        c = conn.cursor()
-        c.execute('SELECT * FROM books WHERE title LIKE ? OR author LIKE ? OR genre LIKE ?',
-                  (f'%{query}%', f'%{query}%', f'%{query}%'))
-        books = c.fetchall()
-        conn.close()
-        logger.debug(f"Rendering index.html for search with query: {query}")
+        cursor = mysql.connection.cursor()
+        cursor.execute('SELECT * FROM books WHERE title LIKE %s OR author LIKE %s OR genre LIKE %s',
+                       (f'%{query}%', f'%{query}%', f'%{query}%'))
+        books = cursor.fetchall()
+        cursor.close()
         return render_template('index.html', books=books, query=query)
     except Exception as e:
         logger.error(f"Error in search route: {e}")
-        flash('An error occurred while searching!', 'error')
-        return redirect(url_for('index'))
+        flash('An error occurred while searching books!', 'error')
+        return render_template('index.html', books=[])
 
-# User registration
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    try:
-        if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            if not username or not password:
-                logger.debug("Missing username or password in registration")
-                flash('Username and password are required!', 'error')
-                return render_template('register.html')
-            user_key = secrets.token_hex(16)
-            conn = get_db()
-            c = conn.cursor()
-            c.execute('INSERT INTO users (username, password, user_key) VALUES (?, ?, ?)',
-                      (username, generate_password_hash(password), user_key))
-            conn.commit()
-            conn.close()
-            logger.debug(f"User {username} registered successfully")
-            flash('Registration successful!', 'success')
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user_key = secrets.token_hex(8)
+        hashed_password = generate_password_hash(password)
+        try:
+            cursor = mysql.connection.cursor()
+            cursor.execute('INSERT INTO users (username, password, user_key) VALUES (%s, %s, %s)',
+                           (username, hashed_password, user_key))
+            mysql.connection.commit()
+            cursor.close()
+            flash('Registration successful! Please login.', 'success')
             return redirect(url_for('login'))
-        logger.debug("Rendering register.html")
-        return render_template('register.html')
-    except sqlite3.IntegrityError:
-        logger.error(f"Username {username} already exists")
-        flash('Username already exists!', 'error')
-        return render_template('register.html')
-    except Exception as e:
-        logger.error(f"Error in register route: {e}")
-        flash('An error occurred during registration!', 'error')
-        return render_template('register.html')
+        except Exception as e:
+            logger.error(f"Error in register route: {e}")
+            flash('Username already exists!', 'error')
+            return render_template('register.html')
+    return render_template('register.html')
 
-# User login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    try:
-        if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            if not username or not password:
-                logger.debug("Missing username or password in login")
-                flash('Username and password are required!', 'error')
-                return render_template('login.html')
-            conn = get_db()
-            c = conn.cursor()
-            c.execute('SELECT * FROM users WHERE username = ?', (username,))
-            user = c.fetchone()
-            if not user:
-                c.execute('SELECT * FROM admins WHERE username = ?', (username,))
-                admin = c.fetchone()
-                if admin and check_password_hash(admin['password'], password):
-                    session['user_id'] = admin['id']
-                    session['username'] = admin['username']
-                    session['is_admin'] = True
-                    admin_key = admin["admin_key"]
-                    conn.close()
-                    logger.debug(f"Admin {username} logged in")
-                    flash(f'Logged in successfully! Admin key: {admin_key}', 'success')
-                    return redirect(url_for('index'))
-            if user and check_password_hash(user['password'], password):
-                session['user_id'] = user['id']
-                session['username'] = user['username']
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        try:
+            cursor = mysql.connection.cursor()
+            cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
+            user = cursor.fetchone()
+            if user and check_password_hash(user[2], password):
+                session['username'] = username
+                session['user_id'] = user[0]
                 session['is_admin'] = False
-                conn.close()
-                logger.debug(f"User {username} logged in")
                 flash('Logged in successfully!', 'success')
                 return redirect(url_for('index'))
-            conn.close()
-            logger.debug(f"Failed login attempt for {username}")
+            cursor.execute('SELECT * FROM admins WHERE username = %s', (username,))
+            admin = cursor.fetchone()
+            if admin and check_password_hash(admin[2], password):
+                session['username'] = username
+                session['user_id'] = admin[0]
+                session['is_admin'] = True
+                flash('Logged in as admin successfully!', 'success')
+                return redirect(url_for('index'))
             flash('Invalid username or password!', 'error')
-        logger.debug("Rendering login.html")
-        return render_template('login.html')
-    except Exception as e:
-        logger.error(f"Error in login route: {e}")
-        flash('An error occurred during login!', 'error')
-        return render_template('login.html')
+            cursor.close()
+        except Exception as e:
+            logger.error(f"Error in login route: {e}")
+            flash('An error occurred while logging in!', 'error')
+    return render_template('login.html')
 
-# Logout
 @app.route('/logout')
 def logout():
-    try:
-        session.clear()
-        logger.debug("User logged out")
-        flash('Logged out successfully!', 'success')
-        return redirect(url_for('login'))
-    except Exception as e:
-        logger.error(f"Error in logout route: {e}")
-        flash('An error occurred during logout!', 'error')
-        return redirect(url_for('login'))
+    session.clear()
+    flash('Logged out successfully!', 'success')
+    return redirect(url_for('index'))
 
-# Add to cart
-@app.route('/add_to_cart/<int:book_id>')
+@app.route('/add_book', methods=['GET', 'POST'])
 @login_required
-def add_to_cart(book_id):
+def add_book():
+    if not session.get('is_admin', False):
+        flash('Access denied! Admin only.', 'error')
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        title = request.form['title']
+        author = request.form['author']
+        genre = request.form['genre']
+        price = float(request.form['price'])
+        try:
+            cursor = mysql.connection.cursor()
+            cursor.execute('INSERT INTO books (title, author, genre, price) VALUES (%s, %s, %s, %s)',
+                           (title, author, genre, price))
+            mysql.connection.commit()
+            cursor.close()
+            flash('Book added successfully!', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            logger.error(f"Error in add_book route: {e}")
+            flash('An error occurred while adding book!', 'error')
+    return render_template('add_book.html')
+
+@app.route('/edit_book/<int:book_id>', methods=['GET', 'POST'])
+@login_required
+def edit_book(book_id):
+    if not session.get('is_admin', False):
+        flash('Access denied! Admin only.', 'error')
+        return redirect(url_for('index'))
     try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute('SELECT * FROM books WHERE id = ?', (book_id,))
-        book = c.fetchone()
+        cursor = mysql.connection.cursor()
+        cursor.execute('SELECT * FROM books WHERE id = %s', (book_id,))
+        book = cursor.fetchone()
         if not book:
-            conn.close()
-            logger.debug(f"Book ID {book_id} not found")
             flash('Book not found!', 'error')
             return redirect(url_for('index'))
-        c.execute('SELECT * FROM cart WHERE user_id = ? AND book_id = ?', (session['user_id'], book_id))
-        existing = c.fetchone()
-        if existing:
-            c.execute('UPDATE cart SET quantity = quantity + 1 WHERE user_id = ? AND book_id = ?',
-                      (session['user_id'], book_id))
-        else:
-            c.execute('INSERT INTO cart (user_id, book_id, quantity) VALUES (?, ?, 1)',
-                      (session['user_id'], book_id))
-        conn.commit()
-        conn.close()
-        logger.debug(f"Book ID {book_id} added to cart for user {session['user_id']}")
-        flash('Book added to cart!', 'success')
+        if request.method == 'POST':
+            title = request.form['title']
+            author = request.form['author']
+            genre = request.form['genre']
+            price = float(request.form['price'])
+            cursor.execute('UPDATE books SET title = %s, author = %s, genre = %s, price = %s WHERE id = %s',
+                           (title, author, genre, price, book_id))
+            mysql.connection.commit()
+            cursor.close()
+            flash('Book updated successfully!', 'success')
+            return redirect(url_for('index'))
+        cursor.close()
+        return render_template('edit_book.html', book=book)
+    except Exception as e:
+        logger.error(f"Error in edit_book route: {e}")
+        flash('An error occurred while editing book!', 'error')
         return redirect(url_for('index'))
+
+@app.route('/delete_book/<int:book_id>', methods=['POST'])
+@login_required
+def delete_book(book_id):
+    if not session.get('is_admin', False):
+        flash('Access denied! Admin only.', 'error')
+        return redirect(url_for('index'))
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute('DELETE FROM cart WHERE book_id = %s', (book_id,))
+        cursor.execute('DELETE FROM wishlist WHERE book_id = %s', (book_id,))
+        cursor.execute('DELETE FROM books WHERE id = %s', (book_id,))
+        if cursor.rowcount == 0:
+            flash('Book not found', 'error')
+        else:
+            flash('Book deleted successfully', 'success')
+        mysql.connection.commit()
+        cursor.close()
+    except Exception as e:
+        logger.error(f"Error in delete_book route: {e}")
+        flash('An error occurred while deleting book!', 'error')
+    return redirect(url_for('index'))
+
+@app.route('/add_to_cart/<int:book_id>')
+def add_to_cart(book_id):
+    if 'user_id' not in session:
+        flash('Please login to add to cart!', 'error')
+        return redirect(url_for('login'))
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute('SELECT * FROM cart WHERE user_id = %s AND book_id = %s',
+                       (session['user_id'], book_id))
+        cart_item = cursor.fetchone()
+        if cart_item:
+            cursor.execute('UPDATE cart SET quantity = quantity + 1 WHERE id = %s', (cart_item[0],))
+        else:
+            cursor.execute('INSERT INTO cart (user_id, book_id, quantity) VALUES (%s, %s, 1)',
+                           (session['user_id'], book_id))
+        mysql.connection.commit()
+        cursor.close()
+        flash('Book added to cart!', 'success')
     except Exception as e:
         logger.error(f"Error in add_to_cart route: {e}")
         flash('An error occurred while adding to cart!', 'error')
-        return redirect(url_for('index'))
+    return redirect(url_for('index'))
 
-# View cart
 @app.route('/cart')
 @login_required
 def cart():
     try:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute('''SELECT b.*, c.quantity
-                     FROM cart c
-                     JOIN books b ON c.book_id = b.id
-                     WHERE c.user_id = ?''', (session['user_id'],))
-        cart_items = c.fetchall()
-        total = sum(item['price'] * item['quantity'] for item in cart_items)
-        conn.close()
-        logger.debug(f"Rendering cart.html for user {session['user_id']}")
-        return render_template('cart.html', cart_items=cart_items, total=total)
+        cursor = mysql.connection.cursor()
+        cursor.execute('''SELECT cart.id, books.title, books.price, cart.quantity
+                          FROM cart JOIN books ON cart.book_id = books.id
+                          WHERE cart.user_id = %s''', (session['user_id'],))
+        cart_items = cursor.fetchall()
+        cursor.close()
+        return render_template('cart.html', cart_items=cart_items)
     except Exception as e:
         logger.error(f"Error in cart route: {e}")
-        flash('An error occurred while loading cart!', 'error')
-        return redirect(url_for('index'))
+        flash('An error occurred while fetching cart!', 'error')
+        return render_template('cart.html', cart_items=[])
 
-# Admin: Add book
-@app.route('/admin/add', methods=['GET', 'POST'])
+@app.route('/cart/update/<int:cart_id>', methods=['POST'])
 @login_required
-def add_book():
+def update_cart(cart_id):
+    quantity = int(request.form['quantity'])
     try:
-        if not session.get('is_admin', False):
-            logger.debug("Non-admin attempted to access add_book")
-            flash('Access denied! Admin only.', 'error')
-            return redirect(url_for('index'))
-        if request.method == 'POST':
-            title = request.form.get('title')
-            author = request.form.get('author')
-            genre = request.form.get('genre')
-            price = request.form.get('price')
-            if not title or not author or not price:
-                logger.debug("Missing title, author, or price in add_book")
-                flash('Title, author, and price are required!', 'error')
-                return render_template('add_book.html')
-            try:
-                price = float(price)
-            except ValueError:
-                logger.debug("Invalid price format in add_book")
-                flash('Price must be a valid number!', 'error')
-                return render_template('add_book.html')
-            conn = get_db()
-            c = conn.cursor()
-            c.execute('INSERT INTO books (title, author, genre, price) VALUES (?, ?, ?, ?)',
-                      (title, author, genre, price))
-            conn.commit()
-            conn.close()
-            logger.debug(f"Book '{title}' added by admin {session['username']}")
-            flash('Book added successfully!', 'success')
-            return redirect(url_for('index'))
-        logger.debug("Rendering add_book.html")
-        return render_template('add_book.html')
+        cursor = mysql.connection.cursor()
+        cursor.execute('UPDATE cart SET quantity = %s WHERE id = %s AND user_id = %s',
+                       (quantity, cart_id, session['user_id']))
+        mysql.connection.commit()
+        cursor.close()
+        flash('Cart updated successfully!', 'success')
     except Exception as e:
-        logger.error(f"Error in add_book route: {e}")
-        flash('An error occurred while adding book!', 'error')
-        return redirect(url_for('index'))
+        logger.error(f"Error in update_cart route: {e}")
+        flash('An error occurred while updating cart!', 'error')
+    return redirect(url_for('cart'))
 
-# Admin: Create new admin account
-@app.route('/admin/create', methods=['GET', 'POST'])
+@app.route('/cart/remove/<int:cart_id>')
 @login_required
-def create_admin():
+def remove_from_cart(cart_id):
     try:
-        if not session.get('is_admin', False):
-            logger.debug("Non-admin attempted to access create_admin")
-            flash('Access denied! Admin only.', 'error')
-            return redirect(url_for('index'))
-        if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            if not username or not password:
-                logger.debug("Missing username or password in create_admin")
-                flash('Username and password are required!', 'error')
-                return render_template('create_admin.html')
-            admin_key = secrets.token_hex(16)
-            conn = get_db()
-            c = conn.cursor()
-            c.execute('INSERT INTO admins (username, password, admin_key) VALUES (?, ?, ?)',
-                      (username, generate_password_hash(password), admin_key))
-            conn.commit()
-            conn.close()
-            logger.debug(f"New admin {username} created by {session['username']}")
-            flash(f'Admin account created successfully! Admin key: {admin_key}', 'success')
-            return redirect(url_for('index'))
-        logger.debug("Rendering create_admin.html")
-        return render_template('create_admin.html')
-    except sqlite3.IntegrityError:
-        logger.error(f"Username {username} already exists for admin creation")
-        flash('Username already exists!', 'error')
-        return render_template('create_admin.html')
+        cursor = mysql.connection.cursor()
+        cursor.execute('DELETE FROM cart WHERE id = %s AND user_id = %s',
+                       (cart_id, session['user_id']))
+        mysql.connection.commit()
+        cursor.close()
+        flash('Item removed from cart!', 'success')
     except Exception as e:
-        logger.error(f"Error in create_admin route: {e}")
-        flash('An error occurred while creating admin account!', 'error')
-        return render_template('create_admin.html')
+        logger.error(f"Error in remove_from_cart route: {e}")
+        flash('An error occurred while removing from cart!', 'error')
+    return redirect(url_for('cart'))
 
-# Initialize database and run the app
-if __name__ == '__main__':
+@app.route('/add_to_wishlist/<int:book_id>', methods=['POST'])
+@login_required
+def add_to_wishlist(book_id):
     try:
-        db_path = init_db()
-        if not os.path.exists(db_path):
-            logger.error("Database file was not created!")
+        cursor = mysql.connection.cursor()
+        cursor.execute('SELECT * FROM wishlist WHERE user_id = %s AND book_id = %s',
+                       (session['user_id'], book_id))
+        if cursor.fetchone():
+            flash('Book already in wishlist!', 'error')
         else:
-            logger.debug("Database initialized successfully!")
-        logger.debug("Starting Flask server on http://127.0.0.1:5000")
-        app.run(debug=True, host='0.0.0.0', port=5000)
+            cursor.execute('INSERT INTO wishlist (user_id, book_id) VALUES (%s, %s)',
+                           (session['user_id'], book_id))
+            mysql.connection.commit()
+            flash('Book added to wishlist!', 'success')
+        cursor.close()
     except Exception as e:
-        logger.error(f"Error starting the app: {e}")
+        logger.error(f"Error in add_to_wishlist route: {e}")
+        flash('An error occurred while adding to wishlist!', 'error')
+    return redirect(url_for('index'))
+
+@app.route('/wishlist')
+@login_required
+def wishlist():
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute('''SELECT wishlist.id, books.title, books.author, books.genre, books.price
+                          FROM wishlist JOIN books ON wishlist.book_id = books.id
+                          WHERE wishlist.user_id = %s''', (session['user_id'],))
+        wishlist_items = cursor.fetchall()
+        cursor.close()
+        return render_template('wishlist.html', wishlist_items=wishlist_items)
+    except Exception as e:
+        logger.error(f"Error in wishlist route: {e}")
+        flash('An error occurred while fetching wishlist!', 'error')
+        return render_template('wishlist.html', wishlist_items=[])
+
+@app.route('/wishlist/remove/<int:wishlist_id>')
+@login_required
+def remove_from_wishlist(wishlist_id):
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute('DELETE FROM wishlist WHERE id = %s AND user_id = %s',
+                       (wishlist_id, session['user_id']))
+        mysql.connection.commit()
+        cursor.close()
+        flash('Item removed from wishlist!', 'success')
+    except Exception as e:
+        logger.error(f"Error in remove_from_wishlist route: {e}")
+        flash('An error occurred while removing from wishlist!', 'error')
+    return redirect(url_for('wishlist'))
+
+if __name__ == '__main__':
+    app.run(debug=True)

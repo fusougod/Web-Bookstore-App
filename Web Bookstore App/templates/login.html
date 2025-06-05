@@ -1,43 +1,23 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bookstore - Login</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .form-container { max-width: 400px; margin: 0 auto; }
-        .form-group { margin-bottom: 15px; }
-        input { width: 100%; padding: 8px; margin-top: 5px; }
-        button { padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        button:hover { background-color: #0056b3; }
-        .flash { padding: 10px; margin-bottom: 10px; border-radius: 5px; }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        a { color: #007bff; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+    <title>Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <h1>Login</h1>
-    {% for message in get_flashed_messages(with_categories=true) %}
-        <div class="flash {{ message[0] }}">{{ message[1] }}</div>
-    {% endfor %}
-    <div class="form-container">
-        <form method="POST" action="{{ url_for('login') }}">
-            <div class="form-group">
-                <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required>
-            </div>
-            <div class="form-group">
-                <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required>
-            </div>
+    <div class="auth-container">
+        <h1>Login</h1>
+        {% for message in get_flashed_messages(with_categories=true) %}
+            <div class="flash {{ message[0] }}">{{ message[1] }}</div>
+        {% endfor %}
+        <form method="post">
+            <p><label>Username: <input type="text" name="username" required></label></p>
+            <p><label>Password: <input type="password" name="password" required></label></p>
             <button type="submit">Login</button>
         </form>
-        <p><a href="{{ url_for('register') }}">Need an account? Register</a></p>
+        <p>Don't have an account? <a href="{{ url_for('register') }}">Register</a></p>
     </div>
 </body>
 </html>
-</template>

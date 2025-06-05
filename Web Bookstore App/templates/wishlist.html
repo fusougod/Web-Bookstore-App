@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bookstore - Wishlist</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="sidebar">
+        <h1>Bookstore</h1>
+        <div class="nav-links">
+            {% if session.username %}
+                <p>Welcome, {{ session.username }}! <a href="{{ url_for('logout') }}">Logout</a></p>
+                <p><a href="{{ url_for('cart') }}">View Cart</a> | <a href="{{ url_for('wishlist') }}">View Wishlist</a></p>
+                {% if session.is_admin %}
+                    <p><a href="{{ url_for('add_book') }}">Add New Book (Admin)</a></p>
+                {% endif %}
+            {% else %}
+                <p><a href="{{ url_for('login') }}">Login</a> | <a href="{{ url_for('register') }}">Register</a></p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="main-content">
+        <h1>Wishlist</h1>
+        {% for message in get_flashed_messages(with_categories=true) %}
+            <div class="flash {{ message[0] }}">{{ message[1] }}</div>
+        {% endfor %}
+        <div class="wishlist-container">
+            {% for item in wishlist_items %}
+                <div class="wishlist-item">
+                    <h3>{{ item[1] }}</h3> <!-- Title -->
+                    <p>Author: {{ item[2] }}</p>
+                    <p>Genre: {{ item[3] }}</p>
+                    <p>Price: ${{ "%.2f" | format(item[4]) }}</p>
+                    <div class="button-container">
+                        <form method="post" action="{{ url_for('remove_from_wishlist', wishlist_id=item[0]) }}" style="display:inline;">
+                            <button type="submit" class="button">Remove from Wishlist</button>
+                        </form>
+                    </div>
+                </div>
+            {% else %}
+                <p>Your wishlist is empty.</p>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

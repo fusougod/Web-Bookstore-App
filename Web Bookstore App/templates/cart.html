@@ -1,20 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bookstore - Cart</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .cart-list { width: 100%; border-collapse: collapse; }
-        .cart-list th, .cart-list td { border: 1px solid #ccc; padding: 10px; text-align: left; }
-        .flash { padding: 10px; margin-bottom: 10px; border-radius: 5px; }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        a { color: #007bff; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+    <title>Cart</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
     <h1>Your Cart</h1>
@@ -22,34 +12,18 @@
     {% for message in get_flashed_messages(with_categories=true) %}
         <div class="flash {{ message[0] }}">{{ message[1] }}</div>
     {% endfor %}
-    {% if cart_items %}
-        <table class="cart-list">
-            <tr>
-                <th>Title</th>
-                <th>Author</th>
-                <th>Genre</th>
-                <th>Price</th>
-                <th>Quantity</th>
-                <th>Subtotal</th>
-            </tr>
-            {% for item in cart_items %}
-                <tr>
-                    <td>{{ item.title }}</td>
-                    <td>{{ item.author }}</td>
-                    <td>{{ item.genre }}</td>
-                    <td>${{ item.price }}</td>
-                    <td>{{ item.quantity }}</td>
-                    <td>${{ item.price * item.quantity }}</td>
-                </tr>
-            {% endfor %}
-            <tr>
-                <td colspan="5" style="text-align: right;"><strong>Total:</strong></td>
-                <td><strong>${{ total }}</strong></td>
-            </tr>
-        </table>
+    {% for item in cart_items %}
+        <div class="cart-item">
+            <h3>{{ item[1] }}</h3>
+            <p>Price: ${{ "%.2f" | format(item[2]) }}</p>
+            <form method="post" action="{{ url_for('update_cart', cart_id=item[0]) }}" style="display:inline;">
+                <label>Quantity: <input type="number" name="quantity" value="{{ item[3] }}" min="1"></label>
+                <button type="submit">Update</button>
+            </form>
+            <p><a href="{{ url_for('remove_from_cart', cart_id=item[0]) }}">Remove</a></p>
+        </div>
     {% else %}
         <p>Your cart is empty.</p>
-    {% endif %}
+    {% endfor %}
 </body>
 </html>
-</template>
